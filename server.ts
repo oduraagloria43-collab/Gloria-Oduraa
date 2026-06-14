@@ -6,7 +6,7 @@
 import express from 'express';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
-import db from './server/db';
+import db from './server/db.ts';
 import { BookingStatus, PaymentMethod } from './src/types';
 
 async function startServer() {
@@ -22,7 +22,7 @@ async function startServer() {
   app.get('/api/health', (req, res) => {
     res.json({ 
       status: 'healthy', 
-      database: 'persistent_json_sqlite_mock',
+      database: 'cloud_sql_postgresql_drizzle',
       timestamp: new Date().toISOString()
     });
   });
@@ -30,168 +30,233 @@ async function startServer() {
   // ------------------------------------------------------------------
   // 2. AUTHENTICATION SERVICE FLOW (Register, Login, Me)
   // ------------------------------------------------------------------
-  app.post('/api/auth/register', (req, res) => {
+  app.post('/api/auth/register', async (req, res) => {
     const { email, fullName, role, phoneNumber, avatarUrl } = req.body;
     
     if (!email || !fullName || !role) {
       return res.status(400).json({ error: 'Email, Full Name, and Role are mandatory parameters.' });
     }
 
-    const existingUser = db.getUserByEmail(email);
-    if (existingUser) {
-      return res.status(400).json({ error: 'An account with this email address already exists.' });
+    try {
+      const existingUser = await db.getUserByEmail(email);
+      if (existingUser) {
+        return res.status(400).json({ error: 'An account with this email address already exists.' });
+      }
+
+      const defaultAvatarUrl = avatarUrl || `https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=150`;
+
+      const newUser = await db.createUser({
+        email,
+        fullName,
+        role: role as any,
+        phoneNumber,
+        avatarUrl: defaultAvatarUrl
+      });
+
+      console.log(`[GlamBook Auth] Registered new user ${newUser.fullName} (${newUser.role})`);
+      res.status(201).json(newUser);
+    } catch (err: any) {
+      console.error('Error in register endpoint:', err);
+      res.status(500).json({ error: 'Failed to create user.' });
     }
-
-    const defaultAvatarUrl = avatarUrl || `https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=150`;
-
-    const newUser = db.createUser({
-      email,
-      fullName,
-      role: role as any,
-      phoneNumber,
-      avatarUrl: defaultAvatarUrl
-    });
-
-    console.log(`[GlamBook Auth] Registered new user ${newUser.fullName} (${newUser.role})`);
-    res.status(201).json(newUser);
   });
 
-  app.post('/api/auth/login', (req, res) => {
+  app.post('/api/auth/login', async (req, res) => {
     const { email } = req.body;
     if (!email) {
       return res.status(400).json({ error: 'Please provide email credentials.' });
     }
 
-    const user = db.getUserByEmail(email);
-    if (!user) {
-      return res.status(404).json({ error: 'No user account registered with this email address.' });
-    }
+    try {
+      const user = await db.getUserByEmail(email);
+      if (!user) {
+        return res.status(404).json({ error: 'No user account registered with this email address.' });
+      }
 
-    console.log(`[GlamBook Auth] User logged in: ${user.fullName} (${user.role})`);
-    res.json(user);
+      console.log(`[GlamBook Auth] User logged in: ${user.fullName} (${user.role})`);
+      res.json(user);
+    } catch (err: any) {
+      console.error('Error in login endpoint:', err);
+      res.status(500).json({ error: 'Internal Server Error' });
+    }
   });
 
-  app.get('/api/auth/me', (req, res) => {
-    // Return mock logged-in customer as default or based on Query string
-    const emailQuery = req.query.email as string;
-    if (emailQuery) {
-      const user = db.getUserByEmail(emailQuery);
-      if (user) return res.json(user);
+  app.get('/api/auth/me', async (req, res) => {
+    try {
+      // Return logged-in customer as default or based on Query string
+      const emailQuery = req.query.email as string;
+      if (emailQuery) {
+        const user = await db.getUserByEmail(emailQuery);
+        if (user) return res.json(user);
+      }
+      
+      // Default fallback to first customer
+      const allUsers = await db.getUsers();
+      const defaultCust = allUsers.find(u => u.role === 'customer') || allUsers[0];
+      res.json(defaultCust);
+    } catch (err: any) {
+      console.error('Error in auth/me endpoint:', err);
+      res.status(500).json({ error: 'Internal Server Error' });
     }
-    
-    // Default fallback to first customer
-    const users = db.getUsers();
-    const defaultCust = users.find(u => u.role === 'customer') || users[0];
-    res.json(defaultCust);
   });
 
-  app.get('/api/auth/users', (req, res) => {
-    res.json(db.getUsers());
+  app.get('/api/auth/users', async (req, res) => {
+    try {
+      res.json(await db.getUsers());
+    } catch (err: any) {
+      console.error('Error in auth/users:', err);
+      res.status(500).json({ error: 'Internal Server Error' });
+    }
   });
 
   // ------------------------------------------------------------------
   // 3. SALON SERVICES SERVICE
   // ------------------------------------------------------------------
-  app.get('/api/services', (req, res) => {
-    res.json(db.getServices());
+  app.get('/api/services', async (req, res) => {
+    try {
+      res.json(await db.getServices());
+    } catch (err) {
+      console.error('Error fetching services:', err);
+      res.status(500).json({ error: 'Internal Server Error' });
+    }
   });
 
-  app.post('/api/services', (req, res) => {
+  app.post('/api/services', async (req, res) => {
     const { name, description, price, duration, imageUrl, category } = req.body;
     if (!name || !price || !duration || !category) {
       return res.status(400).json({ error: 'Service Name, Price, Duration, and Category are required.' });
     }
-    const newService = db.createService({
-      name,
-      description: description || '',
-      price: Number(price),
-      duration: Number(duration),
-      imageUrl: imageUrl || 'https://images.unsplash.com/photo-1560066984-138dadb4c035?auto=format&fit=crop&q=80&w=600',
-      category
-    });
-    res.status(201).json(newService);
+    try {
+      const newService = await db.createService({
+        name,
+        description: description || '',
+        price: Number(price),
+        duration: Number(duration),
+        imageUrl: imageUrl || 'https://images.unsplash.com/photo-1560066984-138dadb4c035?auto=format&fit=crop&q=80&w=600',
+        category
+      });
+      res.status(201).json(newService);
+    } catch (err: any) {
+      console.error('Error creating service:', err);
+      res.status(500).json({ error: err.message });
+    }
   });
 
-  app.put('/api/services/:id', (req, res) => {
+  app.put('/api/services/:id', async (req, res) => {
     const { id } = req.params;
-    const updated = db.updateService(id, req.body);
-    if (!updated) {
-      return res.status(404).json({ error: 'Service not found.' });
+    try {
+      const updated = await db.updateService(id, req.body);
+      if (!updated) {
+        return res.status(404).json({ error: 'Service not found.' });
+      }
+      res.json(updated);
+    } catch (err: any) {
+      console.error('Error updating service:', err);
+      res.status(500).json({ error: err.message });
     }
-    res.json(updated);
   });
 
-  app.delete('/api/services/:id', (req, res) => {
+  app.delete('/api/services/:id', async (req, res) => {
     const { id } = req.params;
-    const deleted = db.deleteService(id);
-    if (!deleted) {
-      return res.status(404).json({ error: 'Service not found or already deleted.' });
+    try {
+      const deleted = await db.deleteService(id);
+      if (!deleted) {
+        return res.status(404).json({ error: 'Service not found or already deleted.' });
+      }
+      res.json({ success: true, message: 'Service removed successfully.' });
+    } catch (err: any) {
+      console.error('Error deleting service:', err);
+      res.status(500).json({ error: err.message });
     }
-    res.json({ success: true, message: 'Service removed successfully.' });
   });
 
   // ------------------------------------------------------------------
   // 4. STYLISTS MANAGEMENT
   // ------------------------------------------------------------------
-  app.get('/api/stylists', (req, res) => {
-    res.json(db.getStylists());
+  app.get('/api/stylists', async (req, res) => {
+    try {
+      res.json(await db.getStylists());
+    } catch (err) {
+      console.error('Error fetching stylists:', err);
+      res.status(500).json({ error: 'Internal Server Error' });
+    }
   });
 
-  app.post('/api/stylists', (req, res) => {
+  app.post('/api/stylists', async (req, res) => {
     const { name, specialties, avatarUrl, bio, isAvailable } = req.body;
     if (!name || !specialties) {
       return res.status(400).json({ error: 'Stylist Name and specialties array are required.' });
     }
-    const newStylist = db.createStylist({
-      name,
-      specialties: Array.isArray(specialties) ? specialties : [specialties],
-      avatarUrl: avatarUrl || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=400',
-      bio: bio || 'Professional hairstylist ready to upgrade your look.',
-      isAvailable: isAvailable !== false
-    });
-    res.status(201).json(newStylist);
+    try {
+      const newStylist = await db.createStylist({
+        name,
+        specialties: Array.isArray(specialties) ? specialties : [specialties],
+        avatarUrl: avatarUrl || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=400',
+        bio: bio || 'Professional hairstylist ready to upgrade your look.',
+        isAvailable: isAvailable !== false
+      });
+      res.status(201).json(newStylist);
+    } catch (err: any) {
+      console.error('Error creating stylist:', err);
+      res.status(500).json({ error: err.message });
+    }
   });
 
-  app.put('/api/stylists/:id', (req, res) => {
+  app.put('/api/stylists/:id', async (req, res) => {
     const { id } = req.params;
-    const updated = db.updateStylist(id, req.body);
-    if (!updated) {
-      return res.status(404).json({ error: 'Stylist profile not found.' });
+    try {
+      const updated = await db.updateStylist(id, req.body);
+      if (!updated) {
+        return res.status(404).json({ error: 'Stylist profile not found.' });
+      }
+      res.json(updated);
+    } catch (err: any) {
+      console.error('Error updating stylist:', err);
+      res.status(500).json({ error: err.message });
     }
-    res.json(updated);
   });
 
   // ------------------------------------------------------------------
   // 5. BOOKINGS WITH ANTI-DOUBLE-BOOKING ENGINE
   // ------------------------------------------------------------------
-  app.get('/api/bookings', (req, res) => {
+  app.get('/api/bookings', async (req, res) => {
     const { customerId, stylistId, status } = req.query;
-    let bList = db.getBookings();
+    try {
+      let bList = await db.getBookings();
 
-    if (customerId) {
-      bList = bList.filter(b => b.customerId === customerId);
-    }
-    if (stylistId) {
-      bList = bList.filter(b => b.stylistId === stylistId);
-    }
-    if (status) {
-      bList = bList.filter(b => b.status === status);
-    }
+      if (customerId) {
+        bList = bList.filter(b => b.customerId === customerId);
+      }
+      if (stylistId) {
+        bList = bList.filter(b => b.stylistId === stylistId);
+      }
+      if (status) {
+        bList = bList.filter(b => b.status === status);
+      }
 
-    res.json(bList);
+      res.json(bList);
+    } catch (err) {
+      console.error('Error fetching bookings:', err);
+      res.status(500).json({ error: 'Internal Server Error' });
+    }
   });
 
-  app.get('/api/bookings/check-slot', (req, res) => {
+  app.get('/api/bookings/check-slot', async (req, res) => {
     const { stylistId, date, timeSlot } = req.query;
     if (!stylistId || !date || !timeSlot) {
       return res.status(400).json({ error: 'stylistId, date, and timeSlot parameters are mandatory.' });
     }
 
-    const available = db.isSlotAvailable(stylistId as string, date as string, timeSlot as string);
-    res.json({ available, stylistId, date, timeSlot });
+    try {
+      const available = await db.isSlotAvailable(stylistId as string, date as string, timeSlot as string);
+      res.json({ available, stylistId, date, timeSlot });
+    } catch (err) {
+      console.error('Error checking slot:', err);
+      res.status(500).json({ error: 'Internal Server Error' });
+    }
   });
 
-  app.post('/api/bookings', (req, res) => {
+  app.post('/api/bookings', async (req, res) => {
     const { 
       customerId, customerName, customerPhone, customerEmail,
       serviceId, serviceName, servicePrice, stylistId, stylistName,
@@ -202,16 +267,16 @@ async function startServer() {
       return res.status(400).json({ error: 'Required booking variables missing.' });
     }
 
-    // Double booking protection guard!
-    const isFree = db.isSlotAvailable(stylistId, date, timeSlot);
-    if (!isFree) {
-      return res.status(409).json({ 
-        error: 'Double-Booking Conflict: This slot has just been secured by another client. Please select a different time slot.' 
-      });
-    }
-
     try {
-      const newBooking = db.createBooking({
+      // Double booking protection guard!
+      const isFree = await db.isSlotAvailable(stylistId, date, timeSlot);
+      if (!isFree) {
+        return res.status(409).json({ 
+          error: 'Double-Booking Conflict: This slot has just been secured by another client. Please select a different time slot.' 
+        });
+      }
+
+      const newBooking = await db.createBooking({
         customerId,
         customerName: customerName || 'Valued Glam Client',
         customerPhone: customerPhone || '+2330000000',
@@ -234,7 +299,7 @@ async function startServer() {
     }
   });
 
-  app.put('/api/bookings/:id/status', (req, res) => {
+  app.put('/api/bookings/:id/status', async (req, res) => {
     const { id } = req.params;
     const { status } = req.body;
 
@@ -242,15 +307,19 @@ async function startServer() {
       return res.status(400).json({ error: 'Status is required.' });
     }
 
-    const updated = db.updateBookingStatus(id, status as BookingStatus);
-    if (!updated) {
-      return res.status(404).json({ error: 'Booking not found.' });
+    try {
+      const updated = await db.updateBookingStatus(id, status as BookingStatus);
+      if (!updated) {
+        return res.status(404).json({ error: 'Booking not found.' });
+      }
+      res.json(updated);
+    } catch (err: any) {
+      console.error('Error updating booking status:', err);
+      res.status(500).json({ error: err.message });
     }
-
-    res.json(updated);
   });
 
-  app.put('/api/bookings/:id/reminders', (req, res) => {
+  app.put('/api/bookings/:id/reminders', async (req, res) => {
     const { id } = req.params;
     const { reminderSmsEnabled, reminderEmailEnabled } = req.body;
 
@@ -258,22 +327,31 @@ async function startServer() {
       return res.status(400).json({ error: 'reminderSmsEnabled and reminderEmailEnabled are required parameters.' });
     }
 
-    const updated = db.updateBookingReminders(id, Boolean(reminderSmsEnabled), Boolean(reminderEmailEnabled));
-    if (!updated) {
-      return res.status(404).json({ error: 'Booking not found.' });
+    try {
+      const updated = await db.updateBookingReminders(id, Boolean(reminderSmsEnabled), Boolean(reminderEmailEnabled));
+      if (!updated) {
+        return res.status(404).json({ error: 'Booking not found.' });
+      }
+      res.json(updated);
+    } catch (err: any) {
+      console.error('Error updating reminders:', err);
+      res.status(500).json({ error: err.message });
     }
-
-    res.json(updated);
   });
 
   // ------------------------------------------------------------------
   // 6. PAYMENT SYSTEMS SIMULATION
   // ------------------------------------------------------------------
-  app.get('/api/payments', (req, res) => {
-    res.json(db.getPayments());
+  app.get('/api/payments', async (req, res) => {
+    try {
+      res.json(await db.getPayments());
+    } catch (err) {
+      console.error('Error fetching payments:', err);
+      res.status(500).json({ error: 'Internal Server Error' });
+    }
   });
 
-  app.post('/api/payments', (req, res) => {
+  app.post('/api/payments', async (req, res) => {
     const { bookingId, customerId, customerName, amount, paymentMethod, phoneNumber } = req.body;
 
     if (!bookingId || !customerId || !amount || !paymentMethod) {
@@ -281,7 +359,7 @@ async function startServer() {
     }
 
     try {
-      const newPayment = db.createPayment({
+      const newPayment = await db.createPayment({
         bookingId,
         customerId,
         customerName: customerName || 'Valued Glam Client',
@@ -300,71 +378,101 @@ async function startServer() {
   // ------------------------------------------------------------------
   // 7. PUBLIC & SERVICE REVIEWS
   // ------------------------------------------------------------------
-  app.get('/api/reviews', (req, res) => {
+  app.get('/api/reviews', async (req, res) => {
     const { stylistId } = req.query;
-    let reviewsList = db.getReviews();
-    if (stylistId) {
-      reviewsList = reviewsList.filter(r => r.stylistId === stylistId);
+    try {
+      let reviewsList = await db.getReviews();
+      if (stylistId) {
+        reviewsList = reviewsList.filter(r => r.stylistId === stylistId);
+      }
+      res.json(reviewsList);
+    } catch (err) {
+      console.error('Error fetching reviews:', err);
+      res.status(500).json({ error: 'Internal Server Error' });
     }
-    res.json(reviewsList);
   });
 
-  app.post('/api/reviews', (req, res) => {
+  app.post('/api/reviews', async (req, res) => {
     const { bookingId, customerId, customerName, stylistId, stylistName, serviceId, serviceName, rating, comment } = req.body;
 
     if (!bookingId || !stylistId || !rating) {
       return res.status(400).json({ error: 'Required parameters missing (bookingId, stylistId, rating).' });
     }
 
-    const newReview = db.createReview({
-      bookingId,
-      customerId: customerId || 'cust-anon',
-      customerName: customerName || 'Anonymous',
-      stylistId,
-      stylistName: stylistName || 'Stylist',
-      serviceId: serviceId || 's-general',
-      serviceName: serviceName || 'General Service',
-      rating: Number(rating),
-      comment: comment || ''
-    });
+    try {
+      const newReview = await db.createReview({
+        bookingId,
+        customerId: customerId || 'cust-anon',
+        customerName: customerName || 'Anonymous',
+        stylistId,
+        stylistName: stylistName || 'Stylist',
+        serviceId: serviceId || 's-general',
+        serviceName: serviceName || 'General Service',
+        rating: Number(rating),
+        comment: comment || ''
+      });
 
-    res.status(201).json(newReview);
+      res.status(201).json(newReview);
+    } catch (err: any) {
+      console.error('Error creating review:', err);
+      res.status(500).json({ error: err.message });
+    }
   });
 
   // ------------------------------------------------------------------
   // 8. NOTIFICATION ALERTS & LOGS
   // ------------------------------------------------------------------
-  app.get('/api/notifications', (req, res) => {
-    res.json(db.getNotifications());
+  app.get('/api/notifications', async (req, res) => {
+    try {
+      res.json(await db.getNotifications());
+    } catch (err) {
+      console.error('Error fetching notifications:', err);
+      res.status(500).json({ error: 'Internal Server Error' });
+    }
   });
 
   // ------------------------------------------------------------------
   // 9. VACATION MANAGEMENT & STYLIST SCHEDULES
   // ------------------------------------------------------------------
-  app.get('/api/availability', (req, res) => {
-    res.json(db.getAvailability());
+  app.get('/api/availability', async (req, res) => {
+    try {
+      res.json(await db.getAvailability());
+    } catch (err) {
+      console.error('Error fetching availability:', err);
+      res.status(500).json({ error: 'Internal Server Error' });
+    }
   });
 
-  app.post('/api/availability', (req, res) => {
+  app.post('/api/availability', async (req, res) => {
     const { stylistId, date, isAvailable, reason } = req.body;
     if (!stylistId || !date) {
       return res.status(400).json({ error: 'stylistId and date are required.' });
     }
-    const updated = db.setStylistAvailability({
-      stylistId,
-      date,
-      isAvailable: isAvailable !== false,
-      reason
-    });
-    res.json(updated);
+    try {
+      const updated = await db.setStylistAvailability({
+        stylistId,
+        date,
+        isAvailable: isAvailable !== false,
+        reason
+      });
+      res.json(updated);
+    } catch (err: any) {
+      console.error('Error setting availability:', err);
+      res.status(500).json({ error: err.message });
+    }
   });
 
   // ------------------------------------------------------------------
   // 10. EXECUTIVE REVENUE & CUSTOMER ANALYTICS FOR ADMIN
   // ------------------------------------------------------------------
-  app.get('/api/admin/analytics', (req, res) => {
-    const stats = db.getDashboardAnalytics();
-    res.json(stats);
+  app.get('/api/admin/analytics', async (req, res) => {
+    try {
+      const stats = await db.getDashboardAnalytics();
+      res.json(stats);
+    } catch (err) {
+      console.error('Error fetching analytics:', err);
+      res.status(500).json({ error: 'Internal Server Error' });
+    }
   });
 
   // ------------------------------------------------------------------
@@ -382,9 +490,10 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 -- 1. USERS TABLE (Linked with Supabase Auth or Custom Server Identity)
 CREATE TABLE IF NOT EXISTS users (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    email VARCHAR(255) UNIQUE NOT NULL,
-    full_name VARCHAR(150) NOT NULL,
+    id SERIAL PRIMARY KEY,
+    uid VARCHAR(255) UNIQUE NOT NULL,
+    email VARCHAR(255) NOT NULL,
+    full_name VARCHAR(150),
     role VARCHAR(20) NOT NULL CHECK (role IN ('customer', 'stylist', 'admin')),
     phone_number VARCHAR(30),
     avatar_url TEXT,
@@ -486,29 +595,11 @@ CREATE TABLE IF NOT EXISTS availability (
     reason VARCHAR(255)
 );
 
--- 9. BUSINESS HOURS SYSTEM
-CREATE TABLE IF NOT EXISTS business_hours (
-    day_of_week INT PRIMARY KEY CHECK (day_of_week BETWEEN 0 AND 6),
-    open_time TIME NOT NULL,
-    close_time TIME NOT NULL,
-    is_closed BOOLEAN DEFAULT FALSE
-);
-
 -- Create optimized Indexes to enforce timing constraints and accelerate reports
 CREATE INDEX IF NOT EXISTS idx_bookings_date_slot ON bookings(appointment_date, time_slot);
 CREATE INDEX IF NOT EXISTS idx_bookings_stylist ON bookings(stylist_id);
 CREATE INDEX IF NOT EXISTS idx_payments_customer ON payments(customer_id);
 CREATE INDEX IF NOT EXISTS idx_reviews_stylist ON reviews(stylist_id);
-
--- Insert default services and stylists values to bootstrap Postgres
-INSERT INTO business_hours (day_of_week, open_time, close_time, is_closed) VALUES
-(0, '12:00:00', '18:00:00', FALSE),
-(1, '08:00:00', '19:00:00', FALSE),
-(2, '08:00:00', '19:00:00', FALSE),
-(3, '08:00:00', '19:00:00', FALSE),
-(4, '08:00:00', '19:00:00', FALSE),
-(5, '08:00:00', '20:00:00', FALSE),
-(6, '08:00:00', '20:00:00', FALSE);
 `;
     res.setHeader('Content-Type', 'text/plain');
     res.send(ddlScript);
