@@ -109,6 +109,22 @@ async function startServer() {
     }
   });
 
+  app.put('/api/auth/profile/:uid', async (req, res) => {
+    const { uid } = req.params;
+    const { fullName, phoneNumber, avatarUrl } = req.body;
+    try {
+      const updatedUser = await db.updateUser(uid, { fullName, phoneNumber, avatarUrl });
+      if (!updatedUser) {
+        return res.status(404).json({ error: 'User profile not found.' });
+      }
+      console.log(`[GlamBook Auth] User profile updated: ${updatedUser.fullName} (${uid})`);
+      res.json(updatedUser);
+    } catch (err: any) {
+      console.error('Error in profile updating endpoint:', err);
+      res.status(500).json({ error: 'Failed to update user profile.' });
+    }
+  });
+
   // ------------------------------------------------------------------
   // 3. SALON SERVICES SERVICE
   // ------------------------------------------------------------------

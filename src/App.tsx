@@ -78,14 +78,23 @@ export default function App() {
 
   // Sync user state on boot
   useEffect(() => {
-    // Check who is logged in or set a default Ama Serwaa customer account
-    fetch('/api/auth/me')
-      .then(res => res.json())
-      .then((data: User) => {
-        setUser(data);
-        setCurrentRole(data.role);
-      })
-      .catch(err => console.error('Auth sync error on boot:', err));
+    // Check local storage for persistent session first
+    const saved = localStorage.getItem('princess_burland_user');
+    if (saved) {
+      try {
+        const data = JSON.parse(saved);
+        if (data && data.email) {
+          setUser(data);
+          setCurrentRole(data.role);
+          return;
+        }
+      } catch (e) {
+        console.warn('Error reading princess_burland_user from localStorage', e);
+      }
+    }
+    
+    // Otherwise, do not auto-login to let new users sign up/sign in.
+    setUser(null);
   }, []);
 
   // Fetch Services, Stylists, and Reviews data lists
@@ -115,6 +124,7 @@ export default function App() {
         const matchingUser = users.find(u => u.role === selectedRole);
         if (matchingUser) {
           setUser(matchingUser);
+          localStorage.setItem('princess_burland_user', JSON.stringify(matchingUser));
         } else {
           // Fallback mockup registered user
           const mockEmail = selectedRole === 'admin' ? 'admin@burlandbookings.com' : `${selectedRole}@work.com`;
@@ -124,7 +134,10 @@ export default function App() {
             body: JSON.stringify({ email: mockEmail })
           })
             .then(res => res.json())
-            .then(u => setUser(u))
+            .then(u => {
+              setUser(u);
+              localStorage.setItem('princess_burland_user', JSON.stringify(u));
+            })
             .catch(err => console.error(err));
         }
       });
@@ -133,6 +146,7 @@ export default function App() {
   const handleLoginSuccess = (authenticatedUser: User) => {
     setUser(authenticatedUser);
     setCurrentRole(authenticatedUser.role);
+    localStorage.setItem('princess_burland_user', JSON.stringify(authenticatedUser));
     if (authenticatedUser.role === 'admin') {
       setCurrentTab('admin');
     } else if (authenticatedUser.role === 'stylist') {
@@ -145,6 +159,7 @@ export default function App() {
 
   const handleDisconnect = () => {
     setUser(null);
+    localStorage.removeItem('princess_burland_user');
     setCurrentTab('home');
   };
 
@@ -158,6 +173,7 @@ export default function App() {
         currentTab={currentTab}
         onChangeTab={setCurrentTab}
         currentUser={user}
+        onDisconnect={handleDisconnect}
       />
 
       {/* 2. CORE LAYOUT ROUTES */}
@@ -618,6 +634,11 @@ export default function App() {
               <CustomerDashboard 
                 customerId={user.id}
                 customerName={user.fullName}
+                currentUser={user}
+                onUpdateUser={(updated: any) => {
+                  setUser(updated);
+                  localStorage.setItem('princess_burland_user', JSON.stringify(updated));
+                }}
                 onChangeTab={setCurrentTab}
               />
             ) : (
@@ -674,6 +695,13 @@ export default function App() {
         {/* CONTACT PAGE VIEW */}
         {currentTab === 'contact' && (
           <ContactPage />
+        )}
+
+        {/* SECURE SUITE SIGN-UP / AUTHENTICATION GATE */}
+        {currentTab === 'auth' && (
+          <div className="space-y-8 animate-fade-in py-6">
+            <AuthLayout onSuccess={handleLoginSuccess} />
+          </div>
         )}
 
 

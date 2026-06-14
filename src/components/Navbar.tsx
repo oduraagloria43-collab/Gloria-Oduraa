@@ -15,9 +15,10 @@ interface NavbarProps {
   currentTab: string;
   onChangeTab: (tab: string) => void;
   currentUser: GLUser | null;
+  onDisconnect?: () => void;
 }
 
-export default function Navbar({ currentRole, onChangeRole, currentTab, onChangeTab, currentUser }: NavbarProps) {
+export default function Navbar({ currentRole, onChangeRole, currentTab, onChangeTab, currentUser, onDisconnect }: NavbarProps) {
   return (
     <header className="sticky top-0 z-50 bg-blush-dark border-b border-blush shadow-sm text-white">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -44,14 +45,20 @@ export default function Navbar({ currentRole, onChangeRole, currentTab, onChange
 
           {/* Navigation Links */}
           <nav className="hidden md:flex space-x-1 lg:space-x-3 h-full">
-            {[
-              { id: 'home', label: 'Home', icon: Sparkles },
-              { id: 'services', label: 'Services', icon: Scissors },
-              { id: 'booking', label: 'Book Appointment', icon: Clipboard },
-              { id: 'my-appointments', label: 'My Appointments', icon: User },
-              { id: 'reviews', label: 'Client Reviews', icon: Star },
-              { id: 'contact', label: 'Contact & Location', icon: MapPin },
-            ].map((tab) => {
+            {(() => {
+              const items = [
+                { id: 'home', label: 'Home', icon: Sparkles },
+                { id: 'services', label: 'Services', icon: Scissors },
+                { id: 'booking', label: 'Book Appointment', icon: Clipboard },
+                { id: 'my-appointments', label: 'My Appointments', icon: User },
+                { id: 'reviews', label: 'Client Reviews', icon: Star },
+                { id: 'contact', label: 'Contact & Location', icon: MapPin },
+              ];
+              if (!currentUser) {
+                items.push({ id: 'auth', label: 'Join Suite', icon: Sparkles });
+              }
+              return items;
+            })().map((tab) => {
               const Icon = tab.icon;
               const isActive = currentTab === tab.id;
               return (
@@ -119,7 +126,7 @@ export default function Navbar({ currentRole, onChangeRole, currentTab, onChange
             <div className="flex items-center space-x-2">
               <img
                 src={currentUser?.avatarUrl || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=100'}
-                alt={currentUser?.fullName}
+                alt={currentUser?.fullName || 'Glamour Guest'}
                 referrerPolicy="no-referrer"
                 className="w-8 h-8 rounded-full object-cover border border-white/30"
               />
@@ -127,6 +134,15 @@ export default function Navbar({ currentRole, onChangeRole, currentTab, onChange
                 <p className="text-[11px] font-bold text-white line-clamp-1 leading-none">{currentUser?.fullName || 'Glamour Guest'}</p>
                 <p className="text-[8px] text-white/80 font-mono uppercase tracking-widest mt-1">Role: {currentRole}</p>
               </div>
+              {currentUser && onDisconnect && (
+                <button
+                  id="btn-navbar-sign-out"
+                  onClick={onDisconnect}
+                  className="bg-black/30 border border-[#D4AF37]/20 hover:border-[#D4AF37] hover:bg-[#D4AF37] hover:text-black text-[9px] uppercase font-bold tracking-wider px-2 py-1 rounded-lg transition duration-200 cursor-pointer ml-1"
+                >
+                  Sign Out
+                </button>
+              )}
             </div>
             
           </div>
@@ -136,13 +152,19 @@ export default function Navbar({ currentRole, onChangeRole, currentTab, onChange
 
       {/* Mobile Navigation bar */}
       <div className="md:hidden flex space-x-1 justify-around py-2 bg-blush border-t border-blush-dark px-2 overflow-x-auto">
-        {[
-          { id: 'home', label: 'Home', icon: Sparkles },
-          { id: 'services', label: 'Services', icon: Scissors },
-          { id: 'booking', label: 'Book', icon: Clipboard },
-          { id: 'my-appointments', label: 'Schedules', icon: User },
-          { id: 'contact', label: 'Contact', icon: MapPin },
-        ].map((tab) => {
+        {(() => {
+          const items = [
+            { id: 'home', label: 'Home', icon: Sparkles },
+            { id: 'services', label: 'Services', icon: Scissors },
+            { id: 'booking', label: 'Book', icon: Clipboard },
+            { id: 'my-appointments', label: 'Schedules', icon: User },
+            { id: 'contact', label: 'Contact', icon: MapPin },
+          ];
+          if (!currentUser) {
+            items.push({ id: 'auth', label: 'Join Suite', icon: Sparkles });
+          }
+          return items;
+        })().map((tab) => {
           const Icon = tab.icon;
           const isActive = currentTab === tab.id;
           return (

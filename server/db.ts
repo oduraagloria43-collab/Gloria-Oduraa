@@ -349,6 +349,23 @@ class GlamBookDatabase {
     }
   }
 
+  async updateUser(uid: string, updated: Partial<User>): Promise<User | null> {
+    try {
+      const result = await db.update(users)
+        .set({
+          fullName: updated.fullName,
+          phoneNumber: updated.phoneNumber,
+          avatarUrl: updated.avatarUrl
+        })
+        .where(eq(users.uid, uid))
+        .returning();
+      return result.length > 0 ? mapUser(result[0]) : null;
+    } catch (err) {
+      console.error('Error in updateUser:', err);
+      return null;
+    }
+  }
+
   // --- SERVICES ---
   async getServices(): Promise<Service[]> {
     try {
