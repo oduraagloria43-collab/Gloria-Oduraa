@@ -1,0 +1,8 @@
+{
+  "name": "Princess Burland bookings",
+  "description": "Premium, luxurious salon and beauty suite booking application for Princess Burland bookings. Featuring service styling selectors, double-booking validation, simulated Mobile Money & card checkout, notifications audit outbox, and an executive admin analytics schema console.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
